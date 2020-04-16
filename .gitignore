@@ -3,6 +3,7 @@ pom.xml
 /lib/
 /classes/
 /target/
+.cpcache
 .lein-failures
 .lein-deps-sum
 .lein-repl-history
