@@ -123,11 +123,6 @@
                   (catch Exception e
                     (log/error e (str "Error creating DB connection for "
                                       (utils/censor-password db))))))]
-    ;; set autocommit to false is necessary for transactional mode
-    ;; and must be enabled for non transactional mode
-    (if (:transaction? db)
-      (.setAutoCommit conn false)
-      (.setAutoCommit conn true))
     {:connection conn}))
 
 (defn disconnect* [db]
@@ -225,9 +220,7 @@
   (try
     (log/info "running initialization script '" init-script-name "'")
     (log/trace "\n" init-script "\n")
-    (if transaction?
-      (sql/db-do-prepared conn (modify-sql-fn init-script))
-      (sql/db-do-prepared conn false (modify-sql-fn init-script) {}))
+    (sql/db-do-prepared conn transaction? (modify-sql-fn init-script) {})
     (catch Throwable t
       (log/error t "failed to initialize the database with:\n" init-script "\n")
       (throw t))))
@@ -238,14 +231,20 @@
       (sql/with-db-transaction
         [t-con db]
         (run-init-script! init-script-name init-script t-con modify-sql-fn transaction?))
-      (run-init-script! init-script-name init-script db modify-sql-fn transaction?))
+      (do
+        ;; According to PR #174 the auto-commit mode must be enabled in order
+        ;; to run the initialization scripts successfully outside a
+        ;; transaction.
+        (when (instance? Connection db)
+          (.setAutoCommit db true))
+        (run-init-script! init-script-name init-script db modify-sql-fn transaction?)))
     (log/error "could not locate the initialization script '" init-script-name "'")))
 
 (defrecord Database [connection config]
   proto/Store
   (config [this] config)
   (init [this]
-    (let [conn (connect* (assoc (:db config) :transaction? (:init-in-transaction? config)))]
+    (let [conn (connect* (:db config))]
       (try
         (init-db! conn
                   (utils/get-migration-dir config)
